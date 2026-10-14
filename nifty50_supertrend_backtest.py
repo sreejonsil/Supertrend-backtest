@@ -4,6 +4,8 @@ import numpy as np, pandas as pd
 PERIOD, MULT = 10, 3.0   # supertrend settings
 FEE = 0.0003             # 0.03% per side
 TP = 0.30                # take profit at +30% from entry (None = off)
+SL = 0.10                # stop loss at -10% from entry (None = off)
+MAX_DAYS = 20            # max holding period in trading days (None = off). Try 15 or 20
 
 STOCKS = """ADANIENT ADANIPORTS APOLLOHOSP ASIANPAINT AXISBANK BAJAJ-AUTO BAJFINANCE
 BAJAJFINSV BEL BHARTIARTL CIPLA COALINDIA DRREDDY EICHERMOT ETERNAL GRASIM HCLTECH
@@ -32,10 +34,15 @@ def supertrend(df, n, m):
 
 def backtest(df):
     d = supertrend(df, PERIOD, MULT)
-    o, h, c = df.Open.values, df.High.values, df.Close.values
+    o, h, l, c = df.Open.values, df.High.values, df.Low.values, df.Close.values
     cap, pos, entry, blocked = 1.0, False, 0.0, False
-    eq, trades, tp_hits = [1.0], [], 0
+    eq, trades, tp_hits, sl_hits = [1.0], [], 0, 0
     cap_in = 1.0
+    entry_day, time_exits = 0, 0
+    try:
+        day_no = pd.factorize(df.index.date)[0]      # trading-day number of each candle
+    except Exception:
+        day_no = np.arange(len(c)) // 7
     for i in range(1, len(c)):
         sig = d[i-1]                      # signal from previous closed candle
         if sig == -1:
@@ -43,13 +50,18 @@ def backtest(df):
         if not pos and sig == 1 and not blocked:
             pos, entry = True, o[i]       # enter at next candle open
             cap_in = cap
+            entry_day = day_no[i]
             cap *= (1 - FEE)
         if pos:
             exit_px = None
-            if TP and h[i] >= entry * (1 + TP):
+            if SL and l[i] <= entry * (1 - SL):   # stop checked first (conservative)
+                exit_px = min(entry * (1 - SL), o[i]); sl_hits += 1; blocked = True
+            elif TP and h[i] >= entry * (1 + TP):
                 exit_px = max(entry * (1 + TP), o[i]); tp_hits += 1; blocked = True
             elif sig == -1:
                 exit_px = o[i]
+            elif MAX_DAYS and day_no[i] - entry_day >= MAX_DAYS:
+                exit_px = o[i]; time_exits += 1; blocked = True
             if exit_px is not None:
                 cap = cap * (exit_px / entry) * (1 - FEE)
                 trades.append(cap / cap_in - 1)
@@ -63,9 +75,14 @@ def backtest(df):
         trades.append(cap / cap_in - 1)
     eq = pd.Series(eq)
     t = np.array(trades)
+    wins, losses = t[t > 0], t[t <= 0]
     return dict(Trades=len(t),
-                WinRate=round((t > 0).mean() * 100, 1) if len(t) else 0,
-                TPHits=tp_hits,
+                Win=len(wins), Loss=len(losses),
+                WinPct=round(len(wins) / len(t) * 100, 1) if len(t) else 0,
+                LossPct=round(len(losses) / len(t) * 100, 1) if len(t) else 0,
+                AvgWin=round(wins.mean() * 100, 1) if len(wins) else 0,
+                AvgLoss=round(losses.mean() * 100, 1) if len(losses) else 0,
+                TPHits=tp_hits, SLHits=sl_hits, TimeExits=time_exits,
                 StrategyPct=round((cap - 1) * 100, 1),
                 BuyHoldPct=round((c[-1] / c[0] - 1) * 100, 1),
                 MaxDD=round((eq / eq.cummax() - 1).min() * 100, 1))
@@ -110,6 +127,9 @@ if __name__ == "__main__":
         time.sleep(0.3)
     res = pd.DataFrame(rows).sort_values("StrategyPct", ascending=False)
     print(res.to_string(index=False))
+    tot_w, tot_l = res.Win.sum(), res.Loss.sum()
+    print("\nOVERALL: winning trades", round(tot_w / (tot_w + tot_l) * 100, 1),
+          "% | losing trades", round(tot_l / (tot_w + tot_l) * 100, 1), "%")
     print("\nStocks tested:", len(res),
           "| Average strategy %:", round(res.StrategyPct.mean(), 1),
           "| Average buy&hold %:", round(res.BuyHoldPct.mean(), 1),
