@@ -1,4 +1,3 @@
-
 # pip install yfinance pandas numpy
 import numpy as np, pandas as pd
 
@@ -6,6 +5,8 @@ PERIOD, MULT = 10, 3.0   # supertrend settings
 FEE = 0.0003             # 0.03% per side
 TP = 0.30                # take profit at +30% from entry (None = off)
 SL = 0.10                # stop loss at -10% from entry (None = off)
+EXIT_ON_RED = True       # False = ignore red signal; exit only on target, stoploss or max days
+TREND_EMA = None         # e.g. 200: buy only when price is above its 200-candle EMA (None = off)
 MAX_DAYS = 20            # max holding period in trading days (None = off). Try 15 or 20
 
 STOCKS = """ADANIENT ADANIPORTS APOLLOHOSP ASIANPAINT AXISBANK BAJAJ-AUTO BAJFINANCE
@@ -41,12 +42,18 @@ def to_4h(df):
     n = day.groupby(day.values).cumcount().values      # 0..6 candle number within the day
     key = pd.Series(list(zip(idx.date, n >= 4)), index=idx)
     g = df.groupby(key.values, sort=False)
-    out = g.agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
+    agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
+    if "Volume" in df.columns: agg["Volume"] = "sum"
+    out = g.agg(agg)
     out.index = g.apply(lambda x: x.index[0]).values
     return out
 
 def backtest(df):
-    d = supertrend(df, PERIOD, MULT)
+    key = (PERIOD, MULT)
+    if df.attrs.get("st_key") != key:
+        df.attrs["st_key"], df.attrs["st"] = key, supertrend(df, PERIOD, MULT)
+    d = df.attrs["st"]
+    ema = df.Close.ewm(span=TREND_EMA, adjust=False).mean().values if TREND_EMA else None
     o, h, l, c = df.Open.values, df.High.values, df.Low.values, df.Close.values
     cap, pos, entry, blocked = 1.0, False, 0.0, False
     eq, trades, tp_hits, sl_hits = [1.0], [], 0, 0
@@ -60,7 +67,7 @@ def backtest(df):
         sig = d[i-1]                      # signal from previous closed candle
         if sig == -1:
             blocked = False               # after a take-profit, wait for a fresh green
-        if not pos and sig == 1 and not blocked:
+        if not pos and sig == 1 and not blocked and (ema is None or c[i-1] > ema[i-1]):
             pos, entry = True, o[i]       # enter at next candle open
             cap_in = cap
             entry_day = day_no[i]
@@ -71,7 +78,7 @@ def backtest(df):
                 exit_px = min(entry * (1 - SL), o[i]); sl_hits += 1; blocked = True
             elif TP and h[i] >= entry * (1 + TP):
                 exit_px = max(entry * (1 + TP), o[i]); tp_hits += 1; blocked = True
-            elif sig == -1:
+            elif EXIT_ON_RED and sig == -1:
                 exit_px = o[i]
             elif MAX_DAYS and day_no[i] - entry_day >= MAX_DAYS:
                 exit_px = o[i]; time_exits += 1; blocked = True
