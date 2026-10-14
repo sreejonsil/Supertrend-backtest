@@ -1,3 +1,4 @@
+
 # pip install yfinance pandas numpy
 import numpy as np, pandas as pd
 
@@ -31,6 +32,18 @@ def supertrend(df, n, m):
         else:
             d[i] = 1 if c[i] > fub[i] else -1
     return d
+
+def to_4h(df):
+    """Yahoo has no 4h data, so build it from 1h candles the way NSE charts do:
+    9:15-13:15 and 13:15-15:30 (2 candles per day)."""
+    idx = df.index
+    day = pd.Series(idx.date, index=idx)
+    n = day.groupby(day.values).cumcount().values      # 0..6 candle number within the day
+    key = pd.Series(list(zip(idx.date, n >= 4)), index=idx)
+    g = df.groupby(key.values, sort=False)
+    out = g.agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
+    out.index = g.apply(lambda x: x.index[0]).values
+    return out
 
 def backtest(df):
     d = supertrend(df, PERIOD, MULT)
@@ -113,6 +126,7 @@ def get_universe(name):
 if __name__ == "__main__":
     import yfinance as yf
     name = sys.argv[1] if len(sys.argv) > 1 else "nifty50"
+    tf = sys.argv[2] if len(sys.argv) > 2 else "1h"      # "1h" or "4h"
     rows = []
     for s in get_universe(name):
         try:
@@ -120,6 +134,8 @@ if __name__ == "__main__":
                              auto_adjust=True, progress=False)
             df.columns = [x[0] if isinstance(x, tuple) else x for x in df.columns]
             df = df.dropna()
+            if tf == "4h":
+                df = to_4h(df)
             if len(df) < 100: raise ValueError("not enough data")
             rows.append({"Stock": s, **backtest(df)})
         except Exception as e:
@@ -134,4 +150,4 @@ if __name__ == "__main__":
           "| Average strategy %:", round(res.StrategyPct.mean(), 1),
           "| Average buy&hold %:", round(res.BuyHoldPct.mean(), 1),
           "| Profitable stocks:", (res.StrategyPct > 0).sum(), "/", len(res))
-    res.to_csv(f"{name}_supertrend_results.csv", index=False)
+    res.to_csv(f"{name}_{tf}_supertrend_results.csv", index=False)
