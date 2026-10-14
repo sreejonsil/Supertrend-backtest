@@ -1,0 +1,27 @@
+name: Strategy lab
+on:
+  workflow_dispatch:
+    inputs:
+      universe:
+        description: "Which stocks"
+        type: choice
+        options: [nifty50, nifty200, midcap100]
+      timeframe:
+        description: "Chart timeframe"
+        type: choice
+        options: [1h, 4h]
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install yfinance pandas numpy
+      - run: python strategy_lab.py ${{ github.event.inputs.universe }} ${{ github.event.inputs.timeframe }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: results
+          path: "*_lab_results.csv"
