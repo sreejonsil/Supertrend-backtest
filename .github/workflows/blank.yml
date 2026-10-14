@@ -1,16 +1,23 @@
 name: Backtest
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      universe:
+        description: "Which stocks"
+        type: choice
+        options: [nifty50, nifty200, midcap100]
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: pip install yfinance pandas numpy
-      - run: python nifty50_supertrend_backtest.py
+      - run: python nifty50_supertrend_backtest.py ${{ github.event.inputs.universe }}
       - uses: actions/upload-artifact@v4
         with:
           name: results
-          path: nifty50_supertrend_results.csv
+          path: "*_supertrend_results.csv"
