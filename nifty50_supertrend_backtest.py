@@ -1,16 +1,15 @@
 # pip install yfinance pandas numpy
-import numpy as np, pandas as pd, yfinance as yf
+import numpy as np, pandas as pd
 
-PERIOD, MULT = 10, 3.0      # supertrend settings
-FEE = 0.0003                # 0.03% per side
-SHORT = False               # True = also go short on red
+PERIOD, MULT = 10, 3.0   # supertrend settings
+FEE = 0.0003             # 0.03% per side
+TP = 0.30                # take profit at +30% from entry (None = off)
 
-# Edit this list if Nifty 50 constituents change
 STOCKS = """ADANIENT ADANIPORTS APOLLOHOSP ASIANPAINT AXISBANK BAJAJ-AUTO BAJFINANCE
 BAJAJFINSV BEL BHARTIARTL CIPLA COALINDIA DRREDDY EICHERMOT ETERNAL GRASIM HCLTECH
 HDFCBANK HDFCLIFE HINDALCO HINDUNILVR ICICIBANK INDUSINDBK INFY ITC JSWSTEEL JIOFIN
 KOTAKBANK LT M&M MARUTI NESTLEIND NTPC ONGC POWERGRID RELIANCE SBILIFE SBIN
-SHRIRAMFIN SUNPHARMA TATACONSUMER TATAMOTORS TATASTEEL TCS TECHM TITAN TRENT
+SHRIRAMFIN SUNPHARMA TATACONSUM TMPV TATASTEEL TCS TECHM TITAN TRENT
 ULTRACEMCO WIPRO""".split()
 
 def supertrend(df, n, m):
@@ -33,42 +32,11 @@ def supertrend(df, n, m):
 
 def backtest(df):
     d = supertrend(df, PERIOD, MULT)
-    pos = pd.Series(d).shift(1).fillna(0).values   # trade on next bar
-    if not SHORT:
-        pos = np.where(pos > 0, 1, 0)
-    ret = df.Close.pct_change().fillna(0).values
-    # use open-to-close style approximation on close returns
-    strat = pos * ret
-    trades = np.abs(np.diff(pos, prepend=0))
-    strat = strat - trades * FEE
-    eq = (1 + pd.Series(strat, index=df.index)).cumprod()
-    dd = (eq / eq.cummax() - 1).min()
-    # trade-level stats
-    tid = (trades > 0).cumsum()
-    tr_ret = pd.Series(strat).groupby(tid).apply(lambda x: (1 + x).prod() - 1)
-    in_trade = pd.Series(pos != 0).groupby(tid).first()
-    tr_ret = tr_ret[in_trade.reindex(tr_ret.index).values]
-    return dict(Trades=len(tr_ret),
-                WinRate=round((tr_ret > 0).mean() * 100, 1) if len(tr_ret) else 0,
-                StrategyPct=round((eq.iloc[-1] - 1) * 100, 1),
-                BuyHoldPct=round((df.Close.iloc[-1] / df.Close.iloc[0] - 1) * 100, 1),
-                MaxDD=round(dd * 100, 1))
-
-rows = []
-for s in STOCKS:
-    try:
-        df = yf.download(s + ".NS", period="730d", interval="1h",
-                         auto_adjust=True, progress=False)
-        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-        df = df.dropna()
-        if len(df) < 100: raise ValueError("not enough data")
-        rows.append({"Stock": s, **backtest(df)})
-    except Exception as e:
-        print("skip", s, e)
-
-res = pd.DataFrame(rows).sort_values("StrategyPct", ascending=False)
-print(res.to_string(index=False))
-print("\nAverage strategy %:", round(res.StrategyPct.mean(), 1),
-      "| Average buy&hold %:", round(res.BuyHoldPct.mean(), 1),
-      "| Profitable stocks:", (res.StrategyPct > 0).sum(), "/", len(res))
-res.to_csv("nifty50_supertrend_results.csv", index=False)
+    o, h, c = df.Open.values, df.High.values, df.Close.values
+    cap, pos, entry, blocked = 1.0, False, 0.0, False
+    eq, trades, tp_hits = [1.0], [], 0
+    cap_in = 1.0
+    for i in range(1, len(c)):
+        sig = d[i-1]                      # signal from previous closed candle
+        if sig == -1:
+            blocked = False               # after a take-profit, wait for a fresh green
