@@ -6,6 +6,10 @@ on:
         description: "Which stocks"
         type: choice
         options: [nifty50, nifty200, midcap100]
+      timeframe:
+        description: "Chart timeframe"
+        type: choice
+        options: [1h, 4h]
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -16,7 +20,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install yfinance pandas numpy
-      - run: python nifty50_supertrend_backtest.py ${{ github.event.inputs.universe }}
+      - run: python nifty50_supertrend_backtest.py ${{ github.event.inputs.universe }} ${{ github.event.inputs.timeframe }}
       - uses: actions/upload-artifact@v4
         with:
           name: results
